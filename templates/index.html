@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#16213E">
+<meta name="color-scheme" content="light">
+<title>Automated Data Analysis Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+
+<div class="app">
+
+  <!-- ===================== SIDEBAR / PIPELINE ===================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">◈</span>
+      <span class="brand-name">Automated Data<br>Analysis Tool</span>
+    </div>
+
+    <nav class="pipeline" id="pipeline">
+      <div class="pipeline-track"></div>
+      <button class="pipe-step active" data-step="1">
+        <span class="pipe-node">1</span>
+        <span class="pipe-label">Collect</span>
+      </button>
+      <button class="pipe-step" data-step="2" disabled>
+        <span class="pipe-node">2</span>
+        <span class="pipe-label">Clean</span>
+      </button>
+      <button class="pipe-step" data-step="3" disabled>
+        <span class="pipe-node">3</span>
+        <span class="pipe-label">Validate</span>
+      </button>
+      <button class="pipe-step" data-step="4" disabled>
+        <span class="pipe-node">4</span>
+        <span class="pipe-label">Analyze</span>
+      </button>
+      <button class="pipe-step" data-step="5" disabled>
+        <span class="pipe-node">5</span>
+        <span class="pipe-label">Visualize</span>
+      </button>
+      <button class="pipe-step" data-step="6" disabled>
+        <span class="pipe-node">6</span>
+        <span class="pipe-label">Export</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="dataset-chip" id="datasetChip">
+        <span class="chip-dot"></span>
+        <span id="datasetName">No dataset loaded</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===================== MAIN ===================== -->
+  <main class="main">
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow" id="stepEyebrow">Step 01 / Collect</p>
+        <h1 id="stepTitle">Bring in your data</h1>
+      </div>
+      <div class="stat-row" id="statRow"></div>
+    </header>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- ---------- STEP 1: COLLECT ---------- -->
+    <section class="panel active" id="panel-1">
+      <div class="card upload-card">
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.txt" hidden>
+          <p class="drop-icon">⇪</p>
+          <p class="drop-text">Drop a file here, or <span class="link">browse</span></p>
+          <p class="drop-hint">.xlsx · .xls · .csv · .txt</p>
+        </div>
+        <div id="uploadOptions" class="upload-options hidden"></div>
+      </div>
+
+      <div class="card preview-card hidden" id="previewCard">
+        <div class="card-head">
+          <h3>Preview</h3>
+          <span class="mono muted" id="previewMeta"></span>
+        </div>
+        <div class="table-scroll" id="previewTable"></div>
+        <button class="btn btn-primary" id="toCleanBtn">Continue to Cleaning →</button>
+      </div>
+    </section>
+
+    <!-- ---------- STEP 2: CLEAN ---------- -->
+    <section class="panel" id="panel-2">
+      <div class="card">
+        <div class="card-head">
+          <h3>Duplicate rows</h3>
+        </div>
+        <p class="muted" id="dupeText">Checking…</p>
+        <button class="btn btn-secondary" id="removeDupesBtn">Remove duplicates</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Missing values</h3>
+        </div>
+        <div id="missingList"></div>
+      </div>
+
+      <button class="btn btn-primary" id="toValidateBtn">Continue to Validation →</button>
+    </section>
+
+    <!-- ---------- STEP 3: VALIDATE ---------- -->
+    <section class="panel" id="panel-3">
+      <div class="card">
+        <div class="card-head"><h3>Data types</h3></div>
+        <div class="table-scroll" id="dtypeTable"></div>
+        <div class="inline-form">
+          <select id="convertCol"></select>
+          <select id="convertType">
+            <option value="int">Whole number</option>
+            <option value="float">Decimal number</option>
+            <option value="str">Text</option>
+            <option value="datetime">Date / time</option>
+          </select>
+          <button class="btn btn-secondary" id="convertBtn">Convert</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Outlier detection</h3></div>
+        <div class="inline-form">
+          <select id="outlierCol"></select>
+          <select id="outlierMethod">
+            <option value="iqr">IQR (standard)</option>
+            <option value="zscore">Z-score</option>
+            <option value="percentile">Percentile cutoff</option>
+          </select>
+          <div id="outlierParams" class="outlier-params"></div>
+          <button class="btn btn-secondary" id="detectBtn">Detect outliers</button>
+        </div>
+        <div id="outlierResult" class="outlier-result hidden"></div>
+      </div>
+
+      <button class="btn btn-primary" id="toAnalyzeBtn">Continue to Analysis →</button>
+    </section>
+
+    <!-- ---------- STEP 4: ANALYZE ---------- -->
+    <section class="panel" id="panel-4">
+      <div class="card">
+        <div class="card-head"><h3>Descriptive statistics</h3></div>
+        <div class="table-scroll" id="statsTable"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Correlation matrix</h3></div>
+        <div class="table-scroll" id="corrTable"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Group-by summary</h3></div>
+        <div class="inline-form">
+          <select id="groupCol"></select>
+          <select id="groupNumCol"></select>
+          <button class="btn btn-secondary" id="groupByBtn">Build summary</button>
+        </div>
+        <div class="table-scroll" id="groupTable"></div>
+      </div>
+
+      <button class="btn btn-primary" id="toVisualizeBtn">Continue to Visualization →</button>
+    </section>
+
+    <!-- ---------- STEP 5: VISUALIZE ---------- -->
+    <section class="panel" id="panel-5">
+      <div class="card">
+        <div class="card-head"><h3>Build a chart</h3></div>
+        <div class="chart-type-grid" id="chartTypeGrid">
+          <button class="chart-type-btn active" data-type="histogram">Histogram</button>
+          <button class="chart-type-btn" data-type="boxplot">Boxplot</button>
+          <button class="chart-type-btn" data-type="bar_counts">Bar (counts)</button>
+          <button class="chart-type-btn" data-type="bar_avg">Bar (average)</button>
+          <button class="chart-type-btn" data-type="line">Line</button>
+          <button class="chart-type-btn" data-type="scatter">Scatter</button>
+          <button class="chart-type-btn" data-type="pie">Pie</button>
+          <button class="chart-type-btn" data-type="heatmap">Heatmap</button>
+        </div>
+        <div class="inline-form" id="chartParams"></div>
+        <button class="btn btn-secondary" id="generateChartBtn">Generate chart</button>
+        <div id="chartPreview" class="chart-preview hidden"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Chart gallery</h3>
+          <span class="mono muted" id="chartCount">0 charts</span>
+        </div>
+        <div class="chart-gallery" id="chartGallery"></div>
+      </div>
+
+      <button class="btn btn-primary" id="toExportBtn">Continue to Export →</button>
+    </section>
+
+    <!-- ---------- STEP 6: EXPORT ---------- -->
+    <section class="panel" id="panel-6">
+      <div class="card">
+        <div class="card-head"><h3>Download your results</h3></div>
+        <div class="export-grid">
+          <a class="export-btn" href="/api/export/xlsx"><span>⬇</span> Cleaned .xlsx <small>Power BI ready</small></a>
+          <a class="export-btn" href="/api/export/csv"><span>⬇</span> Cleaned .csv</a>
+          <a class="export-btn" href="/api/export/charts"><span>⬇</span> All charts <small>.zip</small></a>
+          <a class="export-btn" href="/api/export/powerbi_guide"><span>⬇</span> Power BI guide <small>.txt</small></a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>What happened to your data</h3></div>
+        <pre class="log-box" id="logBox"></pre>
+      </div>
+    </section>
+
+    <footer class="app-footer">
+      <p class="footer-credit">Developed by <strong>Manoj</strong></p>
+      <div class="footer-socials">
+        <a class="social-link" href="https://github.com/Manoj-K-coder" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.4 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg>
+        </a>
+        <a class="social-link" href="https://www.linkedin.com/in/manoj-k-0746b3423?utm_source=share_via&utm_content=profile&utm_medium=member_android" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 8.5v9M6.5 5.5v.01M11 17.5v-5.2c0-1.8 1.2-3 3-3 1.7 0 2.9 1.2 2.9 3v5.2M11 12v5.5"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
+        </a>
+        <a class="social-link" href="https://www.instagram.com/s_h_r_e_e_m_a_n_u?igsh=MXF1bjZhbzJwMGQ1dA==" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.2" cy="6.8" r="1"/></svg>
+        </a>
+      </div>
+    </footer>
+
+  </main>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

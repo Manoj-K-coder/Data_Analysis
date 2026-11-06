@@ -5,6 +5,7 @@ const state = {
   loaded: false,
   columns: [], dtypes: {}, numeric: [], categorical: [], datetime: [],
   maxStepReached: 1,
+  aiEnabled: false,
 };
 
 const stepMeta = {
@@ -25,8 +26,6 @@ function toast(msg, type = "info") {
   toast._t = setTimeout(() => el.classList.remove("show"), 4000);
 }
 
-// ---- top progress bar: ramps toward 90% while requests are pending,
-// completes to 100% and fades out once all pending requests finish ----
 let pendingRequests = 0;
 let progressTimer = null;
 
@@ -57,7 +56,6 @@ function finishProgress() {
   setTimeout(() => { fill.style.width = "0%"; }, 550);
 }
 
-// wrap a button with a spinner + disabled state while an async fn runs
 async function withLoading(btn, fn) {
   if (btn) { btn.classList.add("is-loading"); btn.disabled = true; }
   try {
@@ -89,6 +87,10 @@ async function api(path, options = {}) {
     finishProgress();
   }
 }
+
+const postJSON = (path, body) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
 
 function renderTable(container, rows, maxRows = 15) {
   if (!rows || rows.length === 0) {
@@ -168,6 +170,7 @@ function applyStateSummary(data) {
   state.numeric = data.numeric_columns;
   state.categorical = data.categorical_columns;
   state.datetime = data.datetime_columns;
+  state.aiEnabled = !!data.ai_enabled;
 
   document.getElementById("datasetChip").classList.add("loaded");
   document.getElementById("datasetName").textContent =
@@ -181,11 +184,48 @@ function applyStateSummary(data) {
 
   document.getElementById("logBox").textContent = data.log.map(l => `· ${l}`).join("\n");
 
+  const undoBtn = document.getElementById("undoBtn");
+  undoBtn.disabled = !data.undo_depth;
+  undoBtn.title = data.undo_depth ? `Undo the last change (${data.undo_depth} step${data.undo_depth > 1 ? "s" : ""} available)` : "Nothing to undo";
+  document.getElementById("resetBtn").disabled = !data.can_reset;
+
   renderMissingList(data.missing);
   document.getElementById("dupeText").textContent =
     data.duplicates > 0 ? `${data.duplicates} duplicate row(s) found.` : "No duplicate rows found.";
   document.getElementById("removeDupesBtn").disabled = data.duplicates === 0;
 }
+
+// ---------------------------------------------------------------- undo / reset
+function refreshActiveStep() {
+  const active = document.querySelector(".panel.active");
+  const n = active ? parseInt(active.id.replace("panel-", "")) : 1;
+  document.getElementById("outlierResult").classList.add("hidden");
+  if (n === 3) prepStep3();
+  if (n === 4) prepStep4();
+  if (n === 6) prepStep6();
+}
+
+async function historyAction(path, doneMsg) {
+  const btns = [document.getElementById("undoBtn"), document.getElementById("resetBtn")];
+  btns.forEach(b => b.disabled = true);
+  try {
+    const data = await api(path, { method: "POST" });
+    applyStateSummary(data);
+    renderTable(document.getElementById("previewTable"), data.preview);
+    document.getElementById("previewMeta").textContent = `${data.rows} rows × ${data.cols} columns`;
+    refreshActiveStep();
+    toast(doneMsg);
+  } catch (e) {
+    const s = await api("/api/state").catch(() => null);
+    if (s) applyStateSummary(s);
+  }
+}
+
+document.getElementById("undoBtn").onclick = () => historyAction("/api/undo", "Last change undone.");
+document.getElementById("resetBtn").onclick = () => {
+  if (!confirm("Discard all changes and restore the original upload?")) return;
+  historyAction("/api/reset", "Restored the original upload.");
+};
 
 // ============================================================================
 // STEP 1 — COLLECT
@@ -285,12 +325,23 @@ const fillOptionsNumeric = [
   ["mean", "Fill with mean (average)"],
   ["median", "Fill with median (middle value)"],
   ["mode", "Fill with mode (most common)"],
+  ["knn", "KNN (uses other numeric cols)"],
+  ["iterative", "Iterative / MICE"],
+  ["group_median", "Median within group…"],
+  ["group_mean", "Mean within group…"],
+  ["interpolate", "Interpolate (time series)"],
+  ["ffill", "Forward-fill"],
+  ["bfill", "Backward-fill"],
   ["custom", "Fill with a custom value"],
   ["drop", "Drop rows with this gap"],
   ["skip", "Leave as-is"],
 ];
 const fillOptionsText = [
   ["mode", "Fill with mode (most common)"],
+  ["group_mode", "Mode within group…"],
+  ["ffill", "Forward-fill"],
+  ["bfill", "Backward-fill"],
+  ["unknown", "Fill with 'Unknown'"],
   ["custom", "Fill with a custom value"],
   ["drop", "Drop rows with this gap"],
   ["skip", "Leave as-is"],
@@ -315,28 +366,63 @@ function renderMissingList(missing) {
       <select class="fill-method">
         ${options.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}
       </select>
+      <select class="fill-group hidden"></select>
       <input type="text" class="fill-custom hidden" placeholder="value…">
+      ${state.aiEnabled ? `<button class="btn btn-secondary btn-sm ai-suggest" title="Ask AI which method fits">✨ Suggest</button>` : ""}
       <button class="btn btn-primary apply-fill">Apply</button>
+      <p class="ai-reasoning hidden"></p>
     `;
+
     const methodSelect = row.querySelector(".fill-method");
-    const customInput = row.querySelector(".fill-custom");
-    methodSelect.addEventListener("change", () => {
-      customInput.classList.toggle("hidden", methodSelect.value !== "custom");
-    });
-    row.querySelector(".apply-fill").addEventListener("click", () => {
-      const applyBtn = row.querySelector(".apply-fill");
-      withLoading(applyBtn, async () => {
-        const data = await api("/api/clean/missing", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            column: col, method: methodSelect.value, custom_value: customInput.value,
-          }),
+    const groupSelect  = row.querySelector(".fill-group");
+    const customInput  = row.querySelector(".fill-custom");
+    const note         = row.querySelector(".ai-reasoning");
+
+    function syncRowControls() {
+      const m = methodSelect.value;
+      customInput.classList.toggle("hidden", m !== "custom");
+      const needsGroup = m.startsWith("group_");
+      groupSelect.classList.toggle("hidden", !needsGroup);
+      if (needsGroup && !groupSelect.options.length) {
+        groupSelect.innerHTML = state.categorical
+          .filter(c => c !== col)
+          .map(c => `<option value="${c}">${c}</option>`).join("");
+      }
+    }
+    methodSelect.addEventListener("change", syncRowControls);
+    syncRowControls();
+
+    row.querySelector(".ai-suggest")?.addEventListener("click", e =>
+      withLoading(e.target, async () => {
+        try {
+          const s = await postJSON("/api/ai/impute-suggest", { column: col });
+          const valid = Array.from(methodSelect.options).some(o => o.value === s.method);
+          note.classList.remove("hidden");
+          if (!valid) {
+            note.textContent = `✨ AI suggested "${s.method}" but it doesn't apply to this column. ${s.reasoning}`;
+            return;
+          }
+          methodSelect.value = s.method;
+          if (s.method.startsWith("group_") && s.group_col) groupSelect.value = s.group_col;
+          syncRowControls();
+          note.textContent = `✨ ${s.reasoning} (${Math.round((s.confidence ?? 0) * 100)}% confident)`;
+        } catch (err) { }
+      })
+    );
+
+    row.querySelector(".apply-fill").addEventListener("click", e =>
+      withLoading(e.target, async () => {
+        const data = await postJSON("/api/clean/missing", {
+          column: col,
+          method: methodSelect.value,
+          custom_value: customInput.value,
+          group_col: methodSelect.value.startsWith("group_") ? groupSelect.value : null,
         });
         applyStateSummary(data);
         toast(`'${col}' updated.`);
-      });
-    });
+      })
+    );
+
     container.appendChild(row);
   });
 }
@@ -578,7 +664,7 @@ document.getElementById("chartGallery").addEventListener("click", async (e) => {
     document.getElementById("chartCount").textContent = `${remaining} chart${remaining === 1 ? "" : "s"}`;
     toast(`Chart '${name}' removed.`);
   } catch (err) {
-    btn.disabled = false; // api() already showed the error toast
+    btn.disabled = false;
   }
 });
 

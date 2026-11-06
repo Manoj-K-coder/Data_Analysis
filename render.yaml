@@ -10,3 +10,9 @@ services:
         generateValue: true
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: MAX_UPLOAD_MB
+        value: "10"
+      - key: MAX_HISTORY
+        value: "10"
+      - key: GEMINI_API_KEY
+        sync: false

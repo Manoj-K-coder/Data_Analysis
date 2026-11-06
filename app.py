@@ -21,10 +21,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from flask import Flask, request, jsonify, session, send_file, render_template
 
-# ---- AI SETUP: Hardcoded Groq Key -------------------------------------------
-AI_API_KEY = "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"
-AI_BASE_URL = "https://api.groq.com/openai/v1"
-AI_MODEL    = "llama-3.3-70b-versatile"
+# ---- AI SETUP ---------------------------------------------------------------
+# Reads from environment variable. Falls back to placeholder for local testing.
+AI_API_KEY = os.environ.get("GROQ_API_KEY", "YOUR_NEW_GROQ_API_KEY_HERE")
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://api.groq.com/openai/v1")
+AI_MODEL    = os.environ.get("AI_MODEL", "llama-3.3-70b-versatile")
 
 try:
     from openai import OpenAI
@@ -32,8 +33,12 @@ try:
         api_key=AI_API_KEY,
         base_url=AI_BASE_URL,
     )
-    _AI_OK = True
-    print("[AI] Groq API initialized successfully!")
+    # If the key is the placeholder, don't enable the UI button
+    _AI_OK = True if AI_API_KEY != "YOUR_NEW_GROQ_API_KEY_HERE" else False
+    if _AI_OK:
+        print("[AI] Groq API initialized successfully!")
+    else:
+        print("[AI] AI disabled (using placeholder key).")
 except Exception as e:
     _client, _AI_OK = None, False
     print(f"[AI] Failed to initialize: {e}")

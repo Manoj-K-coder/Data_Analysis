@@ -76,12 +76,49 @@ function skeleton(container, label = "Loading…") {
     </div>`;
 }
 
-async function api(path, options = {}) {
+// ---- keep a browser copy of the data so a server restart doesn't lose it ----
+// Render's free plan wipes the server's memory when the app sleeps or
+// redeploys. We hold the latest cleaned data here and send it back
+// automatically when the server says it has none.
+let dataSnapshot = null;
+let snapshotTimer = null;
+
+function scheduleSnapshot() {
+  clearTimeout(snapshotTimer);
+  snapshotTimer = setTimeout(async () => {
+    try {
+      const res = await fetch("/api/snapshot");
+      if (!res.ok) return;
+      const txt = await res.text();
+      // the server caps request bodies (~10 MB); bigger copies can't be restored
+      dataSnapshot = txt.length < 9.5e6 ? txt : null;
+    } catch (e) { /* offline: keep the previous copy */ }
+  }, 1200);
+}
+
+async function restoreSnapshot() {
+  if (!dataSnapshot) return false;
+  try {
+    const res = await fetch("/api/restore", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: dataSnapshot,
+    });
+    if (!res.ok) return false;
+    applyStateSummary(await res.json());
+    toast("The server had restarted, so your data was restored automatically.");
+    return true;
+  } catch (e) { return false; }
+}
+
+async function api(path, options = {}, retried = false) {
   startProgress();
   try {
     const res = await fetch(path, options);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (!retried && res.status === 400 && /No data loaded/i.test(data.error || "")
+          && await restoreSnapshot()) {
+        return await api(path, options, true);
+      }
       toast(data.error || "Something went wrong.", "error");
       throw new Error(data.error || "request failed");
     }
@@ -195,6 +232,7 @@ function applyStateSummary(data) {
   document.getElementById("dupeText").textContent =
     data.duplicates > 0 ? `${data.duplicates} duplicate row(s) found.` : "No duplicate rows found.";
   document.getElementById("removeDupesBtn").disabled = data.duplicates === 0;
+  scheduleSnapshot();
 }
 
 // ---------------------------------------------------------------- undo / reset
@@ -313,7 +351,7 @@ function onUploadSuccess(data) {
   document.getElementById("previewMeta").textContent = `${data.rows} rows × ${data.cols} columns`;
   renderTable(document.getElementById("previewTable"), data.preview);
   unlockStep(2);
-  chat.history = [];
+  chat.history = []; chat.sig = null;
   document.getElementById("chatLog").innerHTML = "";
   toast(`Loaded ${data.base_name} — ${data.rows} rows.`);
 }
@@ -1102,7 +1140,7 @@ function drawTile(tile, w, spec) {
 // ============================================================================
 // STEP 6 — ASK (chatbot)
 // ============================================================================
-const chat = { history: [], busy: false };
+const chat = { history: [], busy: false, sig: null };
 
 function chatEscape(t) {
   return String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -1143,7 +1181,24 @@ function chatSuggestionList() {
   return s.slice(0, 4);
 }
 
+async function refreshChatSource() {
+  // Always show which version of the data the chatbot is answering from.
+  try {
+    const d = await api("/api/state");
+    const steps = (d.log || []).length;
+    document.getElementById("chatSource").textContent =
+      `Answering from your updated data: ${d.rows} rows × ${d.cols} columns` +
+      (steps ? ` · ${steps} change${steps > 1 ? "s" : ""} applied` : " · no changes applied");
+    const sig = `${d.rows}x${d.cols}:${steps}:${d.undo_depth}`;
+    if (chat.sig && chat.sig !== sig && chat.history.length)
+      chatAddMessage("assistant", "Your data changed since our last messages, so answers from now on use the updated data.");
+    chat.sig = sig;
+  } catch (e) { /* the api helper already showed the error */ }
+}
+
 function prepStep6Chat() {
+  scheduleSnapshot();
+  refreshChatSource();
   const box = document.getElementById("chatSuggestions");
   box.innerHTML = "";
   if (chat.history.length) return;
@@ -1391,4 +1446,3 @@ function wbDraw(res, dims) {
   Plotly.react(wbEl("wbPlot"), traces, layout, plotConfig("workbench"));
   wb.drawn = true;
 }
-

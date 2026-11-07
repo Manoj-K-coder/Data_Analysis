@@ -1037,7 +1037,7 @@ def wb_query():
 # Provider is picked by whichever key is set (Gemini wins if both are): a free
 # Google AI Studio key works on the free tier; an Anthropic key is pay-as-you-go.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip("'\"")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip().strip("'\"")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-sonnet-5-5")
 CHAT_MAX_ROUNDS = 5      # tool-call rounds per question
@@ -1240,7 +1240,7 @@ def _chat_gemini(df, system, messages, tables):
     for _ in range(CHAT_MAX_ROUNDS):
         resp = _post_json(url, {"systemInstruction": {"parts": [{"text": system}]},
                                 "contents": contents, "tools": [tool],
-                                "generationConfig": {"maxOutputTokens": 1024}},
+                                "generationConfig": {"maxOutputTokens": 2048}},
                           {"x-goog-api-key": GEMINI_API_KEY})
         cands = resp.get("candidates") or []
         parts = ((cands[0].get("content") or {}).get("parts") or []) if cands else []
@@ -1358,4 +1358,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     app.run(host="0.0.0.0", port=port, debug=debug)
-    

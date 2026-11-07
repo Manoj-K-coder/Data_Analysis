@@ -14,6 +14,8 @@ import os
 import uuid
 import json
 import re
+import time
+import traceback
 import urllib.error
 import urllib.request
 import warnings
@@ -1194,7 +1196,7 @@ def _run_chat_query(df, q):
 def _post_json(url, payload, headers):
     req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
                                  method="POST", headers={"content-type": "application/json", **headers})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=45) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -1209,8 +1211,10 @@ def _exec_tool(df, args, tables):
         return f"Error: {e}", True
 
 
-def _chat_anthropic(df, system, messages, tables):
+def _chat_anthropic(df, system, messages, tables, deadline):
     for _ in range(CHAT_MAX_ROUNDS):
+        if time.time() > deadline:
+            return None
         resp = _post_json("https://api.anthropic.com/v1/messages",
                           {"model": CHAT_MODEL, "max_tokens": 1024, "system": system,
                            "messages": messages, "tools": [CHAT_TOOL]},
@@ -1231,13 +1235,15 @@ def _chat_anthropic(df, system, messages, tables):
     return None
 
 
-def _chat_gemini(df, system, messages, tables):
+def _chat_gemini(df, system, messages, tables, deadline):
     contents = [{"role": "model" if m["role"] == "assistant" else "user",
                  "parts": [{"text": m["content"]}]} for m in messages]
     tool = {"functionDeclarations": [{"name": CHAT_TOOL["name"], "description": CHAT_TOOL["description"],
                                       "parameters": CHAT_TOOL["input_schema"]}]}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     for _ in range(CHAT_MAX_ROUNDS):
+        if time.time() > deadline:
+            return None
         resp = _post_json(url, {"systemInstruction": {"parts": [{"text": system}]},
                                 "contents": contents, "tools": [tool],
                                 "generationConfig": {"maxOutputTokens": 2048}},
@@ -1283,7 +1289,7 @@ def chat():
     tables = []
     try:
         run = _chat_gemini if GEMINI_API_KEY else _chat_anthropic
-        reply = run(state["df"], system, messages, tables)
+        reply = run(state["df"], system, messages, tables, time.time() + 80)
         if reply is None:
             reply = "That question needed more steps than I can run at once. Try asking it more simply."
         return jsonify(clean_json({"reply": reply or "I couldn't come up with an answer for that.",
@@ -1305,6 +1311,9 @@ def chat():
         return jsonify({"error": f"Chatbot service error ({e.code}): {detail or 'no details'}"}), 502
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         return jsonify({"error": "Couldn't reach the chatbot service."}), 502
+    except Exception as e:  # never let the browser see a bare HTML 500
+        app.logger.error("Chat failed: %s", traceback.format_exc())
+        return jsonify({"error": f"Chat failed: {type(e).__name__}: {str(e)[:200]}"}), 500
 
 
 # --------------------------------------------------------------------------

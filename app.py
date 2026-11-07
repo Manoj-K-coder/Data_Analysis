@@ -1040,6 +1040,9 @@ def wb_query():
 # Google AI Studio key works on the free tier; an Anthropic key is pay-as-you-go.
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip("'\"")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash").strip()
+# Tried in order when the main model is overloaded (503/429) or unavailable (404).
+GEMINI_FALLBACKS = [m.strip() for m in os.environ.get(
+    "GEMINI_FALLBACK_MODELS", "gemini-3.6-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip().strip("'\"")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-sonnet-5-5")
 CHAT_MAX_ROUNDS = 5      # tool-call rounds per question
@@ -1235,12 +1238,12 @@ def _chat_anthropic(df, system, messages, tables, deadline):
     return None
 
 
-def _chat_gemini(df, system, messages, tables, deadline):
+def _chat_gemini(df, system, messages, tables, deadline, model):
     contents = [{"role": "model" if m["role"] == "assistant" else "user",
                  "parts": [{"text": m["content"]}]} for m in messages]
     tool = {"functionDeclarations": [{"name": CHAT_TOOL["name"], "description": CHAT_TOOL["description"],
                                       "parameters": CHAT_TOOL["input_schema"]}]}
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     for _ in range(CHAT_MAX_ROUNDS):
         if time.time() > deadline:
             return None
@@ -1288,8 +1291,25 @@ def chat():
     system = _chat_system_prompt(state)
     tables = []
     try:
-        run = _chat_gemini if GEMINI_API_KEY else _chat_anthropic
-        reply = run(state["df"], system, messages, tables, time.time() + 80)
+        deadline = time.time() + 80
+        if GEMINI_API_KEY:
+            reply, last_err = None, None
+            for model in [GEMINI_MODEL] + [m for m in GEMINI_FALLBACKS if m != GEMINI_MODEL]:
+                tables.clear()
+                try:
+                    reply = _chat_gemini(state["df"], system, list(messages), tables, deadline, model)
+                    last_err = None
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code not in (404, 429, 500, 503) or time.time() > deadline:
+                        raise
+                    app.logger.warning("Gemini model %s failed with %s; trying next", model, e.code)
+                    last_err = e
+                    time.sleep(1)
+            if last_err is not None:
+                raise last_err
+        else:
+            reply = _chat_anthropic(state["df"], system, messages, tables, deadline)
         if reply is None:
             reply = "That question needed more steps than I can run at once. Try asking it more simply."
         return jsonify(clean_json({"reply": reply or "I couldn't come up with an answer for that.",

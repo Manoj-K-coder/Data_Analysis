@@ -1036,9 +1036,9 @@ def wb_query():
 # Numbers in answers therefore come from the data, not from the model.
 # Provider is picked by whichever key is set (Gemini wins if both are): a free
 # Google AI Studio key works on the free tier; an Anthropic key is pay-as-you-go.
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip("'\"")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip().strip("'\"")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-sonnet-5-5")
 CHAT_MAX_ROUNDS = 5      # tool-call rounds per question
 CHAT_MAX_ROWS = 50       # rows returned to the model / shown in the chat
@@ -1291,7 +1291,18 @@ def chat():
     except urllib.error.HTTPError as e:
         if e.code == 429:
             return jsonify({"error": "The chatbot is busy or the free limit was reached. Try again in a minute."}), 429
-        return jsonify({"error": "The chatbot service returned an error. Check that your API key is valid."}), 502
+        detail = ""
+        try:
+            raw = e.read().decode("utf-8", "replace")
+            try:
+                detail = json.loads(raw).get("error", {}).get("message", "") or raw
+            except ValueError:
+                detail = raw
+        except Exception:
+            pass
+        detail = re.sub(r"(key=|AIza|sk-ant-)[\w-]+", r"\1…", detail)[:300]
+        app.logger.error("Chat provider HTTP %s: %s", e.code, detail)
+        return jsonify({"error": f"Chatbot service error ({e.code}): {detail or 'no details'}"}), 502
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         return jsonify({"error": "Couldn't reach the chatbot service."}), 502
 
@@ -1347,3 +1358,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     app.run(host="0.0.0.0", port=port, debug=debug)
+    

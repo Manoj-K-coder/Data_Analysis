@@ -649,3 +649,5 @@ button.export-btn { font-family: inherit; background: none; text-align: left; cu
   .chat-log { height: 320px; }
   .chat-msg { max-width: 96%; }
 }
+
+.chat-source { margin: 12px 0 0; font-size: 12px; }

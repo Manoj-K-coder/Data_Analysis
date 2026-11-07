@@ -203,6 +203,71 @@ def state_endpoint():
     return jsonify(df_summary(state))
 
 
+
+# --------------------------------------------------------------------------
+# SNAPSHOT / RESTORE
+# The server keeps datasets in memory, and Render's free plan wipes that
+# memory when the app sleeps or redeploys. The browser keeps a copy of the
+# current data (via /api/snapshot) and sends it back (/api/restore) when the
+# server reports it has lost it, so users never have to re-upload.
+# --------------------------------------------------------------------------
+@app.route("/api/snapshot", methods=["GET"])
+def snapshot():
+    state, err = df_or_error()
+    if err:
+        return err
+    df = state["df"]
+    return jsonify({
+        "name": state["base_name"],
+        "log": state["log"],
+        "dtypes": {c: str(t) for c, t in df.dtypes.items()},
+        "data": json.loads(df.to_json(orient="split", date_format="iso", date_unit="ms")),
+    })
+
+
+def _restore_dtype(series, dtype):
+    try:
+        if dtype.startswith("datetime64"):
+            return pd.to_datetime(series, errors="coerce")
+        if dtype.startswith(("int", "Int", "uint")):
+            nums = pd.to_numeric(series, errors="coerce")
+            return nums.astype("int64") if nums.notna().all() else nums.astype("float64")
+        if dtype.startswith(("float", "Float")):
+            return pd.to_numeric(series, errors="coerce").astype("float64")
+        if dtype.startswith("bool"):
+            return series.astype("bool") if series.notna().all() else series
+        if dtype == "category":
+            return series.astype("category")
+        try:
+            return series.astype(dtype)  # keeps pandas 3's "str" dtype as it was
+        except Exception:
+            return series.astype(object)
+    except Exception:
+        return series
+
+
+@app.route("/api/restore", methods=["POST"])
+def restore():
+    body = request.get_json(silent=True) or {}
+    data = body.get("data") or {}
+    cols, rows = data.get("columns"), data.get("data")
+    if not isinstance(cols, list) or not isinstance(rows, list) or not cols:
+        return jsonify({"error": "Nothing to restore."}), 400
+    df = pd.DataFrame(rows, columns=cols)
+    dtypes = body.get("dtypes") or {}
+    for c in df.columns:
+        df[c] = _restore_dtype(df[c], str(dtypes.get(c, "object")))
+    state = get_state()
+    state["df"] = df
+    state["base_name"] = str(body.get("name") or "dataset")
+    state["log"] = [str(x) for x in (body.get("log") or [])] + [
+        "Session restored after the server restarted (undo history was reset)."]
+    state["history"] = []
+    state["original"] = (df.copy(), list(state["log"]))
+    state["charts"] = state.get("charts") or {}
+    return jsonify(df_summary(state))
+
+
 # --------------------------------------------------------------------------
 # UNDO / RESET
 # --------------------------------------------------------------------------
@@ -1099,7 +1164,10 @@ def _chat_system_prompt(state):
     return (
         "You are the data assistant inside an automated data-analysis tool. "
         "The user has already cleaned their dataset; answer questions about it.\n\n"
-        f"Dataset '{state['base_name']}': {df.shape[0]} rows, {df.shape[1]} columns.\n"
+        f"Dataset '{state['base_name']}' (the user's CURRENT cleaned version): {df.shape[0]} rows, {df.shape[1]} columns.\n"
+        + ("Changes already applied to the original upload:\n" + "\n".join("- " + str(l) for l in state["log"][-15:]) + "\n"
+           if state["log"] else "")
+        +
         "Columns:\n" + "\n".join(cols) + f"\n\nFirst rows (CSV):\n{sample}\n"
         "Rules:\n"
         "- Use the query_data tool for every figure; never compute or guess numbers yourself.\n"
